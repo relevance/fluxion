@@ -28,17 +28,15 @@
      (let [ch (chan n-or-buf)
            time-seq (fn [t0] (iterate #(+ interval %) t0))]
        (thread
-        (loop [last-cl  (System/currentTimeMillis)
-               plan     (time-seq last-cl)]
-          (let [now-cl        (System/currentTimeMillis)
-                [next & rest] (drop-while #(< % now-cl) plan)]
-            (if (< now-cl last-cl)
-              (recur (time-seq now-cl) now-cl)
-              (do
-                (if (< now-cl next)
-                  (Thread/sleep (- next now-cl)))
-                (>!! ch now-cl)
-                (recur now-cl rest))))))
+        (loop [last-cl (System/currentTimeMillis)
+               [next-cl :as plan] (time-seq last-cl)]
+          (let [now-cl (System/currentTimeMillis)]
+            (condp > now-cl
+              last-cl (recur now-cl (time-seq now-cl))
+              next-cl (do (Thread/sleep (- next-cl now-cl))
+                          (recur now-cl plan))
+              (do (>!! ch now-cl)
+                  (recur now-cl (drop-while #(<= % now-cl) plan)))))))
        ch)))
 
 (defn sample-on
@@ -80,14 +78,12 @@
      (let [t (if (number? t) (timer t) t)
            out (chan n-or-buf)]
        (go-loop [[data port] (alts! [t in]
-                                    :priority true
-                                    :default nil)
+                                    :priority true)
                  pending []]
                 (if (not= port in)
                   (>! out pending)
                   (recur (alts! [t in]
-                               :priority true
-                               :default nil)
+                               :priority true)
                          (conj pending data))))
        out)))
 

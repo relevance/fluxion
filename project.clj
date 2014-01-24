@@ -7,4 +7,4 @@
                  [org.clojure/core.async "0.1.267.0-0d7780-alpha"]]
   :profiles {:dev {:dependencies [[org.clojure/test.generative "0.5.0"]]
                    :aliases {"test" ["run" "-m" "clojure.test.generative.runner" "test"]}
-                   :jvm-opts ["-Dclojure.test.generative.msec=20000" "-Dclojure.test.generative.threads=10"]}})
+                   :jvm-opts ["-Dclojure.test.generative.msec=500000" "-Dclojure.test.generative.threads=10"]}})
