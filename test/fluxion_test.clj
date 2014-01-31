@@ -2,6 +2,7 @@
   (:require [clojure.core.async :refer [chan <!! onto-chan]]
             [fluxion :refer :all]
             [clojure.test :refer :all]
+            [clojure.set :as set]
             [clojure.data.generators :as gen]
             [clojure.test.generative :refer [defspec]]
             [clojure.test.generative.runner :as runner]))
@@ -13,7 +14,8 @@
              (<!! (atom-sink a ch))
              @a))
   [^{:tag (gen/vec gen/long)} vs]
-  (assert (= % (last vs))))
+  (assert (= % (last vs))
+          (str "Atom sink's last value " % " did not match last value of " vs)))
 
 (defspec sink-calls-function-with-every-value
   (fn [vs] (let [ch (chan 1)
@@ -22,8 +24,11 @@
              (<!! (sink #(swap! a conj %) ch))
              [@a vs]))
   [^{:tag (gen/vec gen/string)} vs]
-  (assert (apply = %)))
+  (assert (apply = %)
+          (str "Accrued values " (first %) " did not match input values" vs)))
 
+;; Do too much math so that missing one beat doesn't mean each
+;; subsequent beat is 100% error in the check.
 (defspec timer-is-roughly-periodic
   (fn [interval beats]
     (let [t (timer interval)
@@ -33,10 +38,46 @@
                     (recur (conj ticks (<!! t))
                            (dec beats-to-go))
                     ticks))
-          target-schedule (take beats (iterate (partial + interval) (first ticks)))]
-      (map #(/ (Math/abs (- %1 %2)) interval) ticks target-schedule)))
-  [^{:tag (gen/uniform 20 100)} interval ^{:tag (gen/uniform 2 50)} beats]
-  (assert (< (/ (apply + %) (count %)) 1/10)))
+          lt (last ticks)
+          target-schedule (take-while #(<= % lt) (iterate (partial + interval) (first ticks)))]
+      [ticks target-schedule]))
+  [^{:tag (gen/uniform 80 120)} interval ^{:tag (gen/uniform 80 120)} beats]
+  (let [ticks (first %)
+        target-schedule (nth % 1)
+        error (memoize (fn [target observed]
+                         (Math/abs (- target observed))))
+        errors (into {}
+                     (map
+                      (fn [[k v]]
+                        [k (sort-by last v)])
+                      (group-by first
+                                (for [target target-schedule]
+                                  (let [nearest-tick (apply min-key
+                                                            (partial error target)
+                                                            ticks)]
+                                    [nearest-tick target (error target nearest-tick)])))))
+        tick-errors (for [tick ticks]
+                      (/ (or (last (first (errors tick)))
+                             interval) interval))
+        avg-error (/ (apply + tick-errors) (count tick-errors))
+        picked-targets  (map #(nth (first %) 1) (vals errors))
+        missed-targets (set/difference (set target-schedule)
+                                       (set picked-targets))]
+    (assert (<= avg-error 1/10) (str "Average error " 1/10 " greater than " 1/10))
+    (assert (< (/ (count missed-targets) beats) 1/10)
+            (str "Missed target points " (count missed-targets)
+                 " greater than " (* 1/10 beats)))))
+
+#_(defspec timer-doesnt-generate-threads
+  (fn [timer-count intervals]
+    (let [starting-threads (keys (Thread/getAllStackTraces))
+          intervals-sched (cycle intervals)
+          timers (doseq [interval intervals-sched]
+                        (timer interval))]
+      [intervals-sched timers starting-threads (keys (Thread/getAllStackTraces))]))
+  [^{:tag (gen/uniform 1 2)} timer-count ^{:tag (gen/vec gen/long)} intervals]
+  (let [[intervals-sched timers starting-threads ending-threads] %]
+    (assert (<= (+ (count starting-threads) 1) (count ending-threads)))))
 
 (comment (runner/run 2 10000 #'values-from-channel-appear-in-atom #'sink-calls-function-with-every-value))
 
